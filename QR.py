@@ -1,3 +1,5 @@
+import math
+
 def stringToBits(s, encoding='utf-8'):
 	if encoding == 'utf-8':
 		bits = "".join(["{:08b}".format(min(ord(ch), 255)) for ch in s])
@@ -66,20 +68,72 @@ def bitsToQR(bits):
 		rows.append(row)
 	return rows
 
-def saveQRImage(qr, filename):
+def stringToQRImage(s):
+	return bitsToQR(stringToBits(s))
+
+def saveImage(image, filename):
 	f = open(filename, 'w')
 
 	# header
 	f.write('P3\n')						# encoding(P3:ASCII, P6:binary)
-	f.write('{0} {1}\n'.format(len(qr), len(qr[0])))	# width, height
+	f.write('{0} {1}\n'.format(len(image[0]), len(image)))	# width, height
 	f.write('255\n')					# max value for each RGB
 
 	# body
-	for row in qr:
+	for row in image:
 		for module in row:
 			f.write(" ".join([str(n) for n in module]) + " ")
 		f.write('\n')
 	f.close()
 
 def createQRImageFromString(s, filename):
-	saveQRImage(bitsToQR(stringToBits(s)), filename)
+	saveImage(bitsToQR(stringToBits(s)), filename)
+
+def blendColor(c1, c2, f):
+	c = [round(c1[i] * (1 - f) + c2[i] * f) for i in range(3)]
+	return (c[0], c[1], c[2])
+
+def transformImage(image, rotation, movex, movey, scale, width, height, antialiased=True):
+	backgroundColor = (0, 0, 255)
+	orgWidth = len(image[0])
+	orgHeight = len(image)
+
+	def colorAt(x, y):
+		if x in range(orgWidth) and y in range(orgHeight):
+			return image[y][x]
+		else:
+			return backgroundColor
+	# reading vector and origin point
+	dxx = math.cos(-rotation) / scale
+	dxy = -math.sin(-rotation) / scale
+	dyx = -dxy
+	dyy = dxx
+	x0 = ((-movex) * dxx + (-movey) * dyx)
+	y0 = ((-movex) * dxy + (-movey) * dyy)
+
+	newimage = []
+	for i in range(height):
+		row = []
+		for j in range(width):	
+			if antialiased:
+				# linear interpolation
+				x = x0 + j * dxx + i * dyx
+				y = y0 + j * dxy + i * dyy
+				if x >= -1 and x <= orgWidth and y >= -1 and y <= orgHeight:
+					x1 = math.floor(x)
+					x2 = x1 + 1
+					y1 = math.floor(y)
+					y2 = y1 + 1
+					c1 = blendColor(colorAt(x1,y1), colorAt(x2,y1), x - x1)
+					c2 = blendColor(colorAt(x1,y2), colorAt(x2,y2), x - x1)
+					c = blendColor(c1, c2, y - y1)
+					row.append(c)
+				else:
+					row.append(colorAt(x, y))
+			else:
+				# choose nearest point
+				x = round(x0 + j * dxx + i * dyx)
+				y = round(y0 + j * dxy + i * dyy)
+				row.append(colorAt(x, y))
+		newimage.append(row)
+	return newimage
