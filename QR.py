@@ -1,14 +1,8 @@
 import math
 
-def stringToBits(s, encoding='utf-8'):
-	if encoding == 'utf-8':
-		bits = "".join(["{:08b}".format(min(ord(ch), 255)) for ch in s])
-		return bits
-	elif encoding == 'utf-16':
-		bits = "".join(["{:016b}".format(ord(ch)) for ch in s])
-		return bits		
-	else:
-		raise NameError("invalid argument for encoding")
+def stringToBits(s):
+	bits = "".join(["{:08b}".format(min(ord(ch), 255)) for ch in s])
+	return bits
 
 def bitsToQR(bits):
 	black = (0, 0, 0)
@@ -31,8 +25,7 @@ def bitsToQR(bits):
 	maxStrLen = (width - quietWidth * 2) ** 2 - 9 * 9 * 3
 
 	if len(bits) > maxStrLen:
-		print('string length is too long')
-		return []
+		raise NameError("argument bitarray is too long")
 
 	rows = []
 	idx = 0	# index of next character of s to encode
@@ -86,23 +79,22 @@ def saveImage(image, filename):
 		f.write('\n')
 	f.close()
 
-def createQRImageFromString(s, filename):
-	saveImage(bitsToQR(stringToBits(s)), filename)
+def transformImage(image, rotation, movex, movey, scale, width, height, smoothing=True):
+	def blendColor(c1, c2, f):
+		c = [round(c1[i] * (1 - f) + c2[i] * f) for i in range(3)]
+		return (c[0], c[1], c[2])
 
-def blendColor(c1, c2, f):
-	c = [round(c1[i] * (1 - f) + c2[i] * f) for i in range(3)]
-	return (c[0], c[1], c[2])
-
-def transformImage(image, rotation, movex, movey, scale, width, height, antialiased=True):
 	backgroundColor = (0, 0, 255)
 	orgWidth = len(image[0])
 	orgHeight = len(image)
 
+	# get the color at (x,y) of the original image
 	def colorAt(x, y):
 		if x in range(orgWidth) and y in range(orgHeight):
 			return image[y][x]
 		else:
 			return backgroundColor
+			
 	# reading vector and origin point
 	dxx = math.cos(-rotation) / scale
 	dxy = -math.sin(-rotation) / scale
@@ -115,7 +107,7 @@ def transformImage(image, rotation, movex, movey, scale, width, height, antialia
 	for i in range(height):
 		row = []
 		for j in range(width):	
-			if antialiased:
+			if smoothing:
 				# linear interpolation
 				x = x0 + j * dxx + i * dyx
 				y = y0 + j * dxy + i * dyy
