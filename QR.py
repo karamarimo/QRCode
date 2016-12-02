@@ -1,10 +1,10 @@
 import math
 
-def stringToBits(s):
+def __stringToBits(s):
 	bits = "".join(["{:08b}".format(min(ord(ch), 255)) for ch in s])
 	return bits
 
-def bitsToQR(bits):
+def __bitsToQR(bits):
 	black = (0, 0, 0)
 	white = (255, 255, 255)
 	# get color in Position Detection Pattern including margin (9*9)
@@ -25,7 +25,7 @@ def bitsToQR(bits):
 	maxStrLen = (width - quietWidth * 2) ** 2 - 9 * 9 * 3
 
 	if len(bits) > maxStrLen:
-		raise NameError("argument bitarray is too long")
+		raise NameError("QR error: argument bitarray is too long")
 
 	rows = []
 	idx = 0	# index of next character of s to encode
@@ -62,7 +62,7 @@ def bitsToQR(bits):
 	return rows
 
 def stringToQRImage(s):
-	return bitsToQR(stringToBits(s))
+	return __bitsToQR(__stringToBits(s))
 
 def saveImage(image, filename):
 	f = open(filename, 'w')
@@ -123,9 +123,97 @@ def transformImage(image, rotation, movex, movey, scale, width, height, smoothin
 				else:
 					row.append(colorAt(x, y))
 			else:
-				# choose nearest point
+				# nearest neighbor interpolation
 				x = round(x0 + j * dxx + i * dyx)
 				y = round(y0 + j * dxy + i * dyy)
 				row.append(colorAt(x, y))
 		newimage.append(row)
 	return newimage
+
+# reads a ppm file and returns a image object(2D array)
+def loadImage(filename):
+	def formatError():
+		f.close()
+		raise NameError('QR error: file has wrong format')
+	
+	try:
+		f = open(filename, 'r')
+	except Exception as e:
+		raise NameError('QR error: cannot open file')
+
+	# get header
+	stack = []
+	while True:
+		line = f.readline()
+		sharpIdx = line.find('#')
+		if sharpIdx > -1:
+			# remove the string after '#'
+			line = line[0 : sharpIdx]
+		if line == '':
+			# if it reached EOF
+			formatError()
+
+		stack += line.split()
+		if len(stack) >= 4:
+			# when all the header is read
+			break
+
+	# check header
+	magicNum = stack.pop(0)
+	if magicNum != 'P3':
+		formatError()
+
+	try:
+		width = int(stack.pop(0))
+		height = int(stack.pop(0))
+		maxVal = int(stack.pop(0))
+	except Exception as e:
+		formatError()
+
+	# get data
+	image = []
+	while True:
+		line = f.readline()
+		stack += line.split()
+		if line == '':
+			# if it reached EOF
+			break
+
+	# if the number of color values is not right
+	if len(stack) != width * height * 3:
+		formatError()
+
+	try:
+		for i in range(height):
+			row = []
+			for j in range(width):
+				start = (i * width + j) * 3
+				end = start + 3
+				color = tuple(int(s) for s in stack[start:end])
+				for val in color:
+					if val > maxVal:
+						formatError()
+				row.append(color)
+			image.append(row)
+	except Exception as e:
+		formatError()
+
+	f.close()
+	return image
+
+# binarize image (returned image's color is 0 or 1)
+def binarizeImage(image):
+	width = len(image[0])
+	height = len(image)
+
+	# threshold = average of R + G + B
+	threshold = sum(sum(sum(color) for color in row) for row in image) / (width * height)
+	print('threshold = ' + str(threshold))
+	out = []
+	for row in image:
+		orow = []
+		for color in row:
+			c = 0 if sum(color) < threshold else 1
+			orow.append(c)
+		out.append(orow)
+	return out
