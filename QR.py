@@ -1,10 +1,10 @@
 import math
 
-def __stringToBits(s):
+def _stringToBits(s):
 	bits = "".join(["{:08b}".format(min(ord(ch), 255)) for ch in s])
 	return bits
 
-def __bitsToQR(bits):
+def _bitsToQR(bits):
 	black = (0, 0, 0)
 	white = (255, 255, 255)
 	# get color in Position Detection Pattern including margin (9*9)
@@ -62,7 +62,7 @@ def __bitsToQR(bits):
 	return rows
 
 def stringToQRImage(s):
-	return __bitsToQR(__stringToBits(s))
+	return _bitsToQR(_stringToBits(s))
 
 def saveImage(image, filename):
 	f = open(filename, 'w')
@@ -73,18 +73,28 @@ def saveImage(image, filename):
 	f.write('255\n')					# max value for each RGB
 
 	# body
-	for row in image:
-		for module in row:
-			f.write(" ".join([str(n) for n in module]) + " ")
-		f.write('\n')
+	if (type(image[0][0]) == tuple):
+		# color image mode
+		for row in image:
+			for module in row:
+				f.write(" ".join([str(n) for n in module]) + " ")
+			f.write('\n')
+	else:
+		# binary image mode
+		for row in image:
+			for module in row:
+				color = "0 0 0" if module == 0 else "255 255 255"
+				f.write(color + " ")
+			f.write('\n')		
 	f.close()
 
 def transformImage(image, rotation, movex, movey, scale, width, height, smoothing=True):
+	# linearly blend 2 colors
 	def blendColor(c1, c2, f):
 		c = [round(c1[i] * (1 - f) + c2[i] * f) for i in range(3)]
 		return (c[0], c[1], c[2])
 
-	backgroundColor = (0, 0, 255)
+	backgroundColor = (128, 128, 128)
 	orgWidth = len(image[0])
 	orgHeight = len(image)
 
