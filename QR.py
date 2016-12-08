@@ -1,5 +1,10 @@
 import math
 
+_qr_width = 33
+_quietWidth = 4
+_qr_inner_width = _qr_width - _quietWidth * 2
+_maxStrLen = _qr_inner_width ** 2 - 9 * 9 * 3
+
 def _stringToBits(s):
 	bits = "".join(["{:08b}".format(min(ord(ch), 255)) for ch in s])
 	return bits
@@ -20,36 +25,33 @@ def _bitsToQR(bits):
 		else:
 			return white
 
-	width = 33
-	quietWidth = 4
-	maxStrLen = (width - quietWidth * 2) ** 2 - 9 * 9 * 3
 
-	if len(bits) > maxStrLen:
+	if len(bits) > _maxStrLen:
 		raise NameError("QR error: argument bitarray is too long")
 
 	rows = []
 	idx = 0	# index of next character of s to encode
 	maxIdx = len(bits) - 1
-	for i in range(width):
+	for i in range(_qr_width):
 		row = []
-		for j in range(width):
+		for j in range(_qr_width):
 			color = None
-			if (i not in range(quietWidth, width - quietWidth)) or \
-				(j not in range(quietWidth, width - quietWidth)):
+			if (i not in range(_quietWidth, _qr_width - _quietWidth)) or \
+				(j not in range(_quietWidth, _qr_width - _quietWidth)):
 				# quiet zone
 				color = white
-			elif i in range(quietWidth, quietWidth + 8) and \
-				j in range(quietWidth, quietWidth + 8):
+			elif i in range(_quietWidth, _quietWidth + 8) and \
+				j in range(_quietWidth, _quietWidth + 8):
 				# top left PDP
-				color = PDPColorAt(i - (quietWidth + 3), j - (quietWidth + 3))
-			elif i in range(width - quietWidth - 8, width - quietWidth) and \
-				j in range(quietWidth, quietWidth + 8):
+				color = PDPColorAt(i - (_quietWidth + 3), j - (_quietWidth + 3))
+			elif i in range(_qr_width - _quietWidth - 8, _qr_width - _quietWidth) and \
+				j in range(_quietWidth, _quietWidth + 8):
 				# top right PDP
-				color = PDPColorAt(i - (width - quietWidth - 4), j - (quietWidth + 3))
-			elif i in range(quietWidth, quietWidth + 8) and \
-				j in range(width - quietWidth - 8, width - quietWidth):
+				color = PDPColorAt(i - (_qr_width - _quietWidth - 4), j - (_quietWidth + 3))
+			elif i in range(_quietWidth, _quietWidth + 8) and \
+				j in range(_qr_width - _quietWidth - 8, _qr_width - _quietWidth):
 				# bottom left PDP
-				color = PDPColorAt(i - (quietWidth + 3), j - (width - quietWidth - 4))
+				color = PDPColorAt(i - (_quietWidth + 3), j - (_qr_width - _quietWidth - 4))
 			else:
 				# data
 				if idx <= maxIdx:
@@ -227,3 +229,176 @@ def binarizeImage(image):
 			orow.append(c)
 		out.append(orow)
 	return out
+
+# take a list of 0,1 and encode it using run-length encoding
+# ex. [0,0,1,1,1,0] => [(0,2),(1,3),(0,1)]
+def _runLengthEncode(list):
+	if len(list) == 0:
+		return []
+
+	out = []
+	last = list[0]
+	runLength = 0
+
+	for b in list:
+		if b == last:
+			runLength += 1
+		else:
+			out.append((last, runLength))
+			last = b
+			runLength = 1
+	out.append((last, runLength))
+	return out
+
+# take a run-length encoded list and find position detection patterns
+def _findPDP(list):
+	def near(value, origin, error):
+		return abs(value - origin) < error
+
+	# allowable error [pixel]
+	tolerance = 1
+	
+	rlelist = _runLengthEncode(list)
+	out = []
+
+	# find 1B:1W:3B:1B:1W patterns
+	for i in range(2, len(rlelist) - 2):
+		if rlelist[i][0] == 0:
+			width = rlelist[i][1] / 3
+			if (near(rlelist[i-1][1], width, tolerance)
+			and near(rlelist[i-2][1], width, tolerance)
+			and near(rlelist[i+1][1], width, tolerance)
+			and near(rlelist[i+2][1], width, tolerance)):
+				# get the index of the center of 
+				# the detected pattern in the original list
+				start = sum(ele[1] for ele in rlelist[:i])
+				idx = start + (rlelist[i][1] - 1) / 2
+				out.append(idx)
+	return out
+
+def _distance(p1, p2):
+	return math.hypot(p1[0] - p2[0], p1[1] - p2[1])
+
+def _angle(v1, v2):
+	if v1 == (0, 0) or v2 == (0, 0):
+		raise NameError("invalid argument")
+	cos = (v1[0] * v2[0] + v1[1] * v2[1]) / (math.hypot(v1[0], v1[1]) * math.hypot(v2[0], v2[1]))
+	return math.acos(cos)
+
+def _crossProduct(v1, v2):
+	return v1[0] * v2[1] - v1[1] * v2[0]
+
+# decode a list of {0,1} into a string (unicode, utf-8)
+def _decode(code):
+	out = ""
+	for i in range(0, len(code), 8):
+		codePoint = 0
+		for j in range(i, i + 8):
+			codePoint = codePoint * 2 + code[j]
+		cha = chr(codePoint)
+		out += cha
+	return out
+
+def readQR(binaryImage):
+	# center points of potential position detection patterns
+	points = []
+	# check rows
+	for y in range(len(binaryImage)):
+		patterns = _findPDP(binaryImage[y])
+		points += [(x,y) for x in patterns]
+	# check columns
+	for x in range(len(binaryImage[0])):
+		patterns = _findPDP([row[x] for row in binaryImage])
+		points += [(x,y) for y in patterns]
+
+	# split into clusters
+	clusters = []
+	while len(points) > 0:
+		cluster = [points.pop()]
+		while  True:
+			neighbors = [p for p in points if min(_distance(p,p2) for p2 in cluster) < 1.5]
+			if len(neighbors) == 0:
+				break
+			else:
+				for neighbor in neighbors:
+					points.remove(neighbor)
+				cluster += neighbors
+		clusters.append(cluster)
+	for cluster in clusters:
+		print("cluster: ", cluster)
+
+	# not enough detected patterns
+	if len(clusters) < 3:
+		raise NameError("QR error: failed to read QR image")
+
+	# select top 3 biggest clusters
+	clusters.sort(key=len)
+	clusters = clusters[-3:]
+
+	# get average point of each cluster
+	pdps = []
+	for cluster in clusters:
+		x = sum(p[0] for p in cluster) / len(cluster)
+		y = sum(p[1] for p in cluster) / len(cluster)
+		pdps.append((x, y))
+
+	# get which angle is the nearest to 90 degree
+	angles = []
+	for i in range(3):
+		j = (i + 1) % 3
+		k = (j + 1) % 3
+		v1 = (pdps[j][0] - pdps[i][0], pdps[j][1] - pdps[i][1])
+		v2 = (pdps[k][0] - pdps[i][0], pdps[k][1] - pdps[i][1])
+		angle1 = _angle(v1, v2)
+		angles.append(abs(angle1 - math.pi / 2))
+	tl = angles.index(min(angles))
+	pdp_tl = pdps[tl]
+	
+	i1 = (tl + 1) % 3
+	i2 = (tl + 2) % 3
+	v1 = (pdps[i1][0] - pdps[tl][0], pdps[i1][1] - pdps[tl][1])
+	v2 = (pdps[i2][0] - pdps[tl][0], pdps[i2][1] - pdps[tl][1])
+	if _crossProduct(v1, v2) > 0:
+		pdp_bl = pdps[i2]
+		pdp_tr = pdps[i1]
+	else:
+		pdp_bl = pdps[i1]
+		pdp_tr = pdps[i2]
+
+	print("tl", pdp_tl)
+	print("bl", pdp_bl)
+	print("tr", pdp_tr)
+
+	d = _qr_inner_width - 3 * 2 - 1
+	dx_x = (pdp_tr[0] - pdp_tl[0]) / d
+	dx_y = (pdp_tr[1] - pdp_tl[1]) / d
+	dy_x = (pdp_bl[0] - pdp_tl[0]) / d
+	dy_y = (pdp_bl[1] - pdp_tl[1]) / d
+	x0 = pdp_tl[0] - 3 * dx_x - 3 * dy_x
+	y0 = pdp_tl[1] - 3 * dx_y - 3 * dy_y
+
+	code = []
+	for j in range(_qr_inner_width):
+		for i in range(_qr_inner_width):
+			# ignore position detection patterns
+			if ((i in range(8) and j in range(8)) or 
+				(i in range(_qr_inner_width - 8, _qr_inner_width) and j in range(8)) or
+				(i in range(8) and j in range(_qr_inner_width - 8, _qr_inner_width))):
+				continue
+
+			x = x0 + dx_x * i + dy_x * j
+			y = y0 + dx_y * i + dy_y * j
+			# TODO: get module in smarter way
+			x = round(x)
+			y = round(y)
+			code.append(binaryImage[y][x])
+	# trim trailing 00..0 off the code into a length of a multple of 8
+	code = code[:-(len(code) % 8)]
+	while len(code) > 8:
+		if code[-8:] == [0] * 8:
+			code = code[:-8]
+		else:
+			break
+
+	decoded = _decode(code)
+	return decoded

@@ -1,6 +1,9 @@
 import QR
 import time
 
-image = QR.loadImage('qr2.ppm')
-
+filename = 'qr1.ppm'
+image = QR.loadImage(filename)
 bimage = QR.binarizeImage(image)
+decoded = QR.readQR(bimage)
+print(decoded)
+# QR.saveImage(bimage, "binary_" + filename)
