@@ -1,4 +1,4 @@
 import QR
-image1 = QR.stringToQRImage('kubota ryou 1029266228')
-image2 = QR.transformImage(image1, 2.5, 200, 200, 4, 320, 240, True)
-QR.saveImage(image2, 'qr2.ppm')
+image1 = QR.stringToQRImage("A chain is only as strong as its weakest link.")
+image2 = QR.transformImage(image1, 4.1, 230, 150, 2, 320, 240, False)
+QR.saveImage(image2, 'qr8.ppm')
