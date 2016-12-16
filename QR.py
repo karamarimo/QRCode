@@ -267,29 +267,29 @@ def _runLengthEncode(list):
 
 
 # take a run-length encoded list and find position detection patterns
-def _findPDP(list):
+def _findPDP(list, strict):
     def near(value, origin, error):
         return abs(value - origin) < error
-
-    # allowable error [pixel]
-    tolerance = 1
 
     rlelist = _runLengthEncode(list)
     out = []
 
     # find 1B:1W:3B:1B:1W patterns
     for i in range(2, len(rlelist) - 2):
-        if rlelist[i][0] == 0:
-            width = rlelist[i][1] / 3
-            if (near(rlelist[i - 1][1], width, tolerance) and
-                    near(rlelist[i - 2][1], width, tolerance) and
-                    near(rlelist[i + 1][1], width, tolerance) and
-                    near(rlelist[i + 2][1], width, tolerance)):
+        if rlelist[i][0] == 0 and rlelist[i][1] >= 3:
+            mod_width = rlelist[i][1] / 3
+            # allowable error [pixel]
+            tolerance = 4 / 3 if strict else mod_width / 8
+            if (near(rlelist[i - 1][1], mod_width, tolerance) and
+                    near(rlelist[i - 2][1], mod_width, tolerance) and
+                    near(rlelist[i + 1][1], mod_width, tolerance) and
+                    near(rlelist[i + 2][1], mod_width, tolerance)):
                 # get the index of the center of
                 # the detected pattern in the original list
-                start = sum(ele[1] for ele in rlelist[:i])
-                idx = start + (rlelist[i][1] - 1) / 2
-                out.append(idx)
+                start = sum(ele[1] for ele in rlelist[:i - 2])
+                length = sum(ele[1] for ele in rlelist[i - 2:i + 3])
+                center = start + (length - 1) / 2
+                out.append(center)
     return out
 
 
@@ -321,16 +321,16 @@ def _decode(code):
     return out
 
 
-def _readBinaryQRImage(binaryImage):
+def _readBinaryQRImage(binaryImage, strict):
     # center points of potential position detection patterns
     points = []
     # check rows
     for y in range(len(binaryImage)):
-        patterns = _findPDP(binaryImage[y])
+        patterns = _findPDP(binaryImage[y], strict)
         points += [(x, y) for x in patterns]
     # check columns
     for x in range(len(binaryImage[0])):
-        patterns = _findPDP([row[x] for row in binaryImage])
+        patterns = _findPDP([row[x] for row in binaryImage], strict)
         points += [(x, y) for y in patterns]
 
     # split into clusters
@@ -375,6 +375,7 @@ def _readBinaryQRImage(binaryImage):
         angle1 = _angle(v1, v2)
         angles.append(abs(angle1 - math.pi / 2))
     tl = angles.index(min(angles))
+    # determine which point is which PDP
     pdp_tl = pdps[tl]
 
     i1 = (tl + 1) % 3
@@ -392,6 +393,7 @@ def _readBinaryQRImage(binaryImage):
     print("bl", pdp_bl)
     print("tr", pdp_tr)
 
+    # get the origin coordinates of QR pattern (excluding quiet zone)
     d = _qr_inner_width - 3 * 2 - 1
     dx_x = (pdp_tr[0] - pdp_tl[0]) / d
     dx_y = (pdp_tr[1] - pdp_tl[1]) / d
@@ -427,6 +429,7 @@ def _readBinaryQRImage(binaryImage):
             m = round(m)
             code.append(m)
     print(code)
+
     # trim trailing 00..0 off the code into a length of a multple of 8
     code = code[:-(len(code) % 8)]
     while len(code) > 8:
@@ -438,5 +441,5 @@ def _readBinaryQRImage(binaryImage):
     return decoded
 
 
-def readQRImage(image):
-    return _readBinaryQRImage(_binarizeImage(image))
+def readQRImage(image, strict=True):
+    return _readBinaryQRImage(_binarizeImage(image), strict)
