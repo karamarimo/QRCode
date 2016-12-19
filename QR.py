@@ -155,7 +155,7 @@ def transformImage(image, rotation, movex, movey,
 
 
 # reads a ppm file and returns a image object(2D array)
-def loadImage(filename):
+def loadPPMImage(filename):
     def formatError():
         f.close()
         raise NameError('QR error: file has wrong format')
@@ -428,7 +428,7 @@ def _readBinaryQRImage(binaryImage, strict):
             m = (y_c - y) * m1 + (y - y_f) * m2
             m = round(m)
             code.append(m)
-    print(code)
+    # print(code)
 
     # trim trailing 00..0 off the code into a length of a multple of 8
     code = code[:-(len(code) % 8)]
