@@ -1,4 +1,5 @@
 import math
+import numpy as np
 
 _qr_width = 33
 _quietWidth = 4
@@ -7,13 +8,15 @@ _maxStrLen = _qr_inner_width ** 2 - 9 * 9 * 3
 
 
 def _stringToBits(s):
-    bits = "".join(["{:08b}".format(min(ord(ch), 255)) for ch in s])
+    bits = []
+    for ch in s:
+        bits += [int(bit) for bit in "{:08b}".format(min(ord(ch), 255))]
     return bits
 
 
 def _bitsToQR(bits):
-    black = (0, 0, 0)
-    white = (255, 255, 255)
+    black = np.array([0, 0, 0])
+    white = np.array([255, 255, 255])
 
     # get color in Position Detection Pattern including margin (9*9)
     # origin is at the center
@@ -31,11 +34,10 @@ def _bitsToQR(bits):
     if len(bits) > _maxStrLen:
         raise NameError("QR error: argument bitarray is too long")
 
-    rows = []
+    image = np.zeros((_qr_width, _qr_width, 3), np.uint8)
     idx = 0     # index of next character of s to encode
     maxIdx = len(bits) - 1
     for i in range(_qr_width):
-        row = []
         for j in range(_qr_width):
             color = None
             if (i not in range(_quietWidth, _qr_width - _quietWidth)) or \
@@ -62,13 +64,12 @@ def _bitsToQR(bits):
             else:
                 # data
                 if idx <= maxIdx:
-                    color = white if bits[idx] == '1' else black
+                    color = white if bits[idx] == 1 else black
                     idx += 1
                 else:
                     color = black
-            row.append(color)
-        rows.append(row)
-    return rows
+            image[i, j] = color
+    return image
 
 
 def stringToQRImage(s):
@@ -80,22 +81,20 @@ def saveImage(image, filename):
 
     # header
     f.write('P3\n')                     # encoding(P3:ASCII, P6:binary)
-    f.write('{0} {1}\n'.format(len(image[0]), len(image)))  # width, height
+    f.write('{0} {1}\n'.format(image.shape[1], image.shape[0]))  # width,height
     f.write('255\n')                    # max value for each RGB
 
     # body
-    if (type(image[0][0]) == tuple):
+    if (len(image.shape) == 3):
         # color image mode
         for row in image:
-            for module in row:
-                f.write(" ".join([str(n) for n in module]) + " ")
+            f.write(" ".join([str(n) for n in row.flat]))
             f.write('\n')
     else:
         # binary image mode
         for row in image:
-            for module in row:
-                color = "0 0 0" if module == 0 else "255 255 255"
-                f.write(color + " ")
+            f.write(" ".join(["0 0 0" if n == 0 else "255 255 255"
+                              for n in row]))
             f.write('\n')
     f.close()
 
@@ -104,57 +103,53 @@ def transformImage(image, rotation, movex, movey,
                    scale, width, height, smoothing=False):
     # linearly blend 2 colors
     def blendColor(c1, c2, f):
-        c = [round(c1[i] * (1 - f) + c2[i] * f) for i in range(3)]
-        return (c[0], c[1], c[2])
+        c = np.rint(c1 * (1 - f) + c2 * f).astype(np.uint8)
+        return c
 
-    backgroundColor = (128, 128, 128)
-    orgWidth = len(image[0])
-    orgHeight = len(image)
+    backgroundColor = np.array([128, 128, 128])
+    orgWidth = image.shape[1]
+    orgHeight = image.shape[0]
 
-    # get the color at (x,y) of the original image
+    # get the color at v(x,y) of the original image
     def colorAt(x, y):
         if x in range(orgWidth) and y in range(orgHeight):
-            return image[y][x]
+            return image[y, x]
         else:
             return backgroundColor
 
-    # reading vector and origin point
-    dxx = math.cos(-rotation) / scale
-    dxy = -math.sin(-rotation) / scale
-    dyx = -dxy
-    dyy = dxx
-    x0 = ((-movex) * dxx + (-movey) * dyx)
-    y0 = ((-movex) * dxy + (-movey) * dyy)
+    # axis vector and origin point
+    conv = np.array([[math.cos(-rotation), -math.sin(-rotation)],
+                     [math.sin(-rotation), math.cos(-rotation)]]) / scale
+    v0 = conv @ [-movey, -movex]
 
-    newimage = []
+    newimage = np.zeros((height, width, 3), np.uint8)
     for i in range(height):
-        row = []
         for j in range(width):
+            v = v0 + conv @ np.array([i, j])
             if smoothing:
                 # linear interpolation
-                x = x0 + j * dxx + i * dyx
-                y = y0 + j * dxy + i * dyy
-                if x >= -1 and x <= orgWidth and y >= -1 and y <= orgHeight:
-                    x1 = math.floor(x)
+                if (v[1] >= -1 and v[1] <= orgWidth and
+                        v[0] >= -1 and v[0] <= orgHeight):
+                    x1 = math.floor(v[1])
                     x2 = x1 + 1
-                    y1 = math.floor(y)
+                    y1 = math.floor(v[0])
                     y2 = y1 + 1
-                    c1 = blendColor(colorAt(x1, y1), colorAt(x2, y1), x - x1)
-                    c2 = blendColor(colorAt(x1, y2), colorAt(x2, y2), x - x1)
-                    c = blendColor(c1, c2, y - y1)
-                    row.append(c)
+                    c1 = blendColor(colorAt(x1, y1), colorAt(x2, y1),
+                                    v[1] - x1)
+                    c2 = blendColor(colorAt(x1, y2), colorAt(x2, y2),
+                                    v[1] - x1)
+                    c = blendColor(c1, c2, v[0] - y1)
+                    newimage[i, j] = c
                 else:
-                    row.append(colorAt(x, y))
+                    newimage[i, j] = backgroundColor
             else:
                 # nearest neighbor interpolation
-                x = round(x0 + j * dxx + i * dyx)
-                y = round(y0 + j * dxy + i * dyy)
-                row.append(colorAt(x, y))
-        newimage.append(row)
+                v1 = np.rint(v).astype(int)
+                newimage[i, j] = colorAt(v1[1], v1[0])
     return newimage
 
 
-# reads a ppm file and returns a image object(2D array)
+# reads a ppm file and returns a image object(2D ndarray)
 def loadPPMImage(filename):
     def formatError():
         f.close()
@@ -194,61 +189,41 @@ def loadPPMImage(filename):
     except Exception as e:
         formatError()
 
+    if maxVal != 255:
+        formatError()
+
     # get data
-    image = []
     while True:
         line = f.readline()
         stack += line.split()
         if line == '':
             # if it reached EOF
             break
+    f.close()
 
     # if the number of color values is not right
     if len(stack) != width * height * 3:
         formatError()
 
-    try:
-        for i in range(height):
-            row = []
-            for j in range(width):
-                start = (i * width + j) * 3
-                end = start + 3
-                color = tuple(int(s) for s in stack[start:end])
-                for val in color:
-                    if val > maxVal:
-                        formatError()
-                row.append(color)
-            image.append(row)
-    except Exception as e:
-        formatError()
-
-    f.close()
+    image = np.array(stack, np.uint8)
+    image = image.reshape((height, width, 3))
     return image
 
 
 # binarize image (returned image's color is 0 or 1)
 def _binarizeImage(image):
-    width = len(image[0])
-    height = len(image)
-
     # threshold = average of R + G + B
-    threshold = sum(sum(sum(color) for color in row) for row in image) \
-        / (width * height)
+    threshold = image.mean(axis=(0, 1)).sum()
     print('threshold = ' + str(threshold))
-    out = []
-    for row in image:
-        orow = []
-        for color in row:
-            c = 0 if sum(color) < threshold else 1
-            orow.append(c)
-        out.append(orow)
-    return out
+    colorSum = image.sum(axis=2)    # sum of RGB at each pixel
+    _image = np.where(colorSum < threshold, 0, 1)
+    return _image
 
 
-# take a list of 0,1 and encode it using run-length encoding
-# ex. [0,0,1,1,1,0] => [(0,2),(1,3),(0,1)]
+# take a ndarray of 0,1 and encode it into a list using run-length encoding
+# ex. array([0,0,1,1,1,0]) => [(0,2),(1,3),(0,1)]
 def _runLengthEncode(list):
-    if len(list) == 0:
+    if list.size == 0:
         return []
 
     out = []
@@ -266,12 +241,13 @@ def _runLengthEncode(list):
     return out
 
 
-# take a run-length encoded list and find position detection patterns
-def _findPDP(list, strict):
+# take a ndarrayof 0,1 and
+# return the center of potential position detection patterns
+def _findPDP(array, strict):
     def near(value, origin, error):
         return abs(value - origin) < error
 
-    rlelist = _runLengthEncode(list)
+    rlelist = _runLengthEncode(array)
     out = []
 
     # find 1B:1W:3B:1B:1W patterns
@@ -293,15 +269,10 @@ def _findPDP(list, strict):
     return out
 
 
-def _distance(p1, p2):
-    return math.hypot(p1[0] - p2[0], p1[1] - p2[1])
-
-
 def _angle(v1, v2):
-    if v1 == (0, 0) or v2 == (0, 0):
+    if (not v1.any()) or (not v2.any()):
         raise NameError("invalid argument")
-    cos = (v1[0] * v2[0] + v1[1] * v2[1]) \
-        / (math.hypot(v1[0], v1[1]) * math.hypot(v2[0], v2[1]))
+    cos = np.dot(v1, v2) / np.linalg.norm(v1) / np.linalg.norm(v2)
     return math.acos(cos)
 
 
@@ -322,16 +293,22 @@ def _decode(code):
 
 
 def _readBinaryQRImage(binaryImage, strict):
+    def removeArray(lis, item):
+        for i, ele in enumerate(lis):
+            if np.array_equal(item, ele):
+                lis.pop(i)
+                break
+
     # center points of potential position detection patterns
     points = []
     # check rows
-    for y in range(len(binaryImage)):
+    for y in range(binaryImage.shape[0]):
         patterns = _findPDP(binaryImage[y], strict)
-        points += [(x, y) for x in patterns]
+        points += [np.array([y, x]) for x in patterns]
     # check columns
-    for x in range(len(binaryImage[0])):
-        patterns = _findPDP([row[x] for row in binaryImage], strict)
-        points += [(x, y) for y in patterns]
+    for x in range(binaryImage.shape[1]):
+        patterns = _findPDP(binaryImage[:, x], strict)
+        points += [np.array([y, x]) for y in patterns]
 
     # split into clusters
     clusters = []
@@ -339,12 +316,13 @@ def _readBinaryQRImage(binaryImage, strict):
         cluster = [points.pop()]
         while True:
             neighbors = [p for p in points
-                         if min(_distance(p, p2) for p2 in cluster) < 1.5]
+                         if min(np.linalg.norm(p - p2) for p2 in cluster) <
+                         1.5]
             if len(neighbors) == 0:
                 break
             else:
                 for neighbor in neighbors:
-                    points.remove(neighbor)
+                    removeArray(points, neighbor)
                 cluster += neighbors
         clusters.append(cluster)
     # for cluster in clusters:
@@ -361,17 +339,16 @@ def _readBinaryQRImage(binaryImage, strict):
     # get average point of each cluster
     pdps = []
     for cluster in clusters:
-        x = sum(p[0] for p in cluster) / len(cluster)
-        y = sum(p[1] for p in cluster) / len(cluster)
-        pdps.append((x, y))
+        avg = sum(cluster) / len(cluster)
+        pdps.append(avg)
 
     # get which angle is the nearest to 90 degree
     angles = []
     for i in range(3):
         j = (i + 1) % 3
         k = (j + 1) % 3
-        v1 = (pdps[j][0] - pdps[i][0], pdps[j][1] - pdps[i][1])
-        v2 = (pdps[k][0] - pdps[i][0], pdps[k][1] - pdps[i][1])
+        v1 = pdps[j] - pdps[i]
+        v2 = pdps[k] - pdps[i]
         angle1 = _angle(v1, v2)
         angles.append(abs(angle1 - math.pi / 2))
     tl = angles.index(min(angles))
@@ -380,14 +357,14 @@ def _readBinaryQRImage(binaryImage, strict):
 
     i1 = (tl + 1) % 3
     i2 = (tl + 2) % 3
-    v1 = (pdps[i1][0] - pdps[tl][0], pdps[i1][1] - pdps[tl][1])
-    v2 = (pdps[i2][0] - pdps[tl][0], pdps[i2][1] - pdps[tl][1])
+    v1 = pdps[i1] - pdps[tl]
+    v2 = pdps[i2] - pdps[tl]
     if _crossProduct(v1, v2) > 0:
-        pdp_bl = pdps[i2]
-        pdp_tr = pdps[i1]
-    else:
         pdp_bl = pdps[i1]
         pdp_tr = pdps[i2]
+    else:
+        pdp_bl = pdps[i2]
+        pdp_tr = pdps[i1]
 
     print("tl", pdp_tl)
     print("bl", pdp_bl)
@@ -395,13 +372,11 @@ def _readBinaryQRImage(binaryImage, strict):
 
     # get the origin coordinates of QR pattern (excluding quiet zone)
     d = _qr_inner_width - 3 * 2 - 1
-    dx_x = (pdp_tr[0] - pdp_tl[0]) / d
-    dx_y = (pdp_tr[1] - pdp_tl[1]) / d
-    dy_x = (pdp_bl[0] - pdp_tl[0]) / d
-    dy_y = (pdp_bl[1] - pdp_tl[1]) / d
-    x0 = pdp_tl[0] - 3 * dx_x - 3 * dy_x
-    y0 = pdp_tl[1] - 3 * dx_y - 3 * dy_y
-
+    dy = (pdp_bl - pdp_tl) / d
+    dx = (pdp_tr - pdp_tl) / d
+    conv = np.array([dy, dx]).T
+    v0 = pdp_tl + conv @ np.array([-3, -3])
+    print('v0:', v0)
     # get code from image
     code = []
     for j in range(_qr_inner_width):
@@ -413,20 +388,18 @@ def _readBinaryQRImage(binaryImage, strict):
                 (i in range(8) and
                     j in range(_qr_inner_width - 8, _qr_inner_width))):
                 continue
-
-            x = x0 + dx_x * i + dy_x * j
-            y = y0 + dx_y * i + dy_y * j
+            v = v0 + conv @ np.array([j, i])
             # get module at (x,y) using bilinear interpolation
-            x_f = math.floor(x)
+            x_f = math.floor(v[1])
             x_c = x_f + 1
-            y_f = math.floor(y)
+            y_f = math.floor(v[0])
             y_c = y_f + 1
-            m1 = (x_c - x) * binaryImage[y_f][x_f] + \
-                (x - x_f) * binaryImage[y_f][x_c]
-            m2 = (x_c - x) * binaryImage[y_c][x_f] + \
-                (x - x_f) * binaryImage[y_c][x_c]
-            m = (y_c - y) * m1 + (y - y_f) * m2
-            m = round(m)
+            m1 = (x_c - v[1]) * binaryImage[y_f, x_f] + \
+                (v[1] - x_f) * binaryImage[y_f, x_c]
+            m2 = (x_c - v[1]) * binaryImage[y_c, x_f] + \
+                (v[1] - x_f) * binaryImage[y_c, x_c]
+            m = (y_c - v[0]) * m1 + (v[0] - y_f) * m2
+            m = round(m).astype(int)
             code.append(m)
     # print(code)
 
