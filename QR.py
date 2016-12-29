@@ -32,7 +32,7 @@ def _bitsToQR(bits):
             return white
 
     if len(bits) > _maxStrLen:
-        raise NameError("QR error: argument bitarray is too long")
+        raise ValueError("QR error: argument bitarray is too long")
 
     image = np.zeros((_qr_width, _qr_width, 3), np.uint8)
     idx = 0     # index of next character of s to encode
@@ -153,12 +153,12 @@ def transformImage(image, rotation, movex, movey,
 def loadPPMImage(filename):
     def formatError():
         f.close()
-        raise NameError('QR error: file has wrong format')
+        raise ValueError('QR error: file has wrong format')
 
     try:
         f = open(filename, 'r')
     except Exception as e:
-        raise NameError('QR error: cannot open file')
+        raise ValueError('QR error: cannot open file')
 
     # get header
     stack = []
@@ -271,7 +271,7 @@ def _findPDP(array, strict):
 
 def _angle(v1, v2):
     if (not v1.any()) or (not v2.any()):
-        raise NameError("invalid argument")
+        raise ValueError("invalid argument")
     cos = np.dot(v1, v2) / np.linalg.norm(v1) / np.linalg.norm(v2)
     return math.acos(cos)
 
@@ -330,11 +330,18 @@ def _readBinaryQRImage(binaryImage, strict):
 
     # not enough detected patterns
     if len(clusters) < 3:
-        raise NameError("QR error: failed to read QR image")
+        raise ValueError("QR error: failed to read QR image")
+
+    # TODO: only accept clusters that have points from both RLE direction
 
     # select top 3 biggest clusters
     clusters.sort(key=len)
     clusters = clusters[-3:]
+
+    # if one of the clusters have size of < 2, raise error
+    for cluster in clusters:
+        if len(cluster) < 2:
+            raise ValueError("QR error: failed to read QR image")
 
     # get average point of each cluster
     pdps = []
@@ -366,9 +373,9 @@ def _readBinaryQRImage(binaryImage, strict):
         pdp_bl = pdps[i2]
         pdp_tr = pdps[i1]
 
-    print("tl", pdp_tl)
-    print("bl", pdp_bl)
-    print("tr", pdp_tr)
+    print("topleft pdp:", pdp_tl)
+    print("bottomleft pdp:", pdp_bl)
+    print("topright pdp", pdp_tr)
 
     # get the origin coordinates of QR pattern (excluding quiet zone)
     d = _qr_inner_width - 3 * 2 - 1
@@ -377,6 +384,13 @@ def _readBinaryQRImage(binaryImage, strict):
     conv = np.array([dy, dx]).T
     v0 = pdp_tl + conv @ np.array([-3, -3])
     print('v0:', v0)
+
+    # check if the bottom right corner is in image
+    bottomright = v0 + (dx + dy) * _qr_inner_width
+    if not (bottomright[0] > 0 and bottomright[0] < binaryImage.shape[0] and
+            bottomright[1] > 0 and bottomright[1] < binaryImage.shape[1]):
+        raise ValueError("QR error: failed to read QR image")
+
     # get code from image
     code = []
     for j in range(_qr_inner_width):
