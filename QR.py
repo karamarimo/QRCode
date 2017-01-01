@@ -214,7 +214,6 @@ def loadPPMImage(filename):
 def _binarizeImage(image):
     # threshold = average of R + G + B
     threshold = image.mean(axis=(0, 1)).sum()
-    print('threshold = ' + str(threshold))
     colorSum = image.sum(axis=2)    # sum of RGB at each pixel
     _image = np.where(colorSum < threshold, 0, 1)
     return _image
@@ -304,20 +303,22 @@ def _readBinaryQRImage(binaryImage, strict):
     # check rows
     for y in range(binaryImage.shape[0]):
         patterns = _findPDP(binaryImage[y], strict)
-        points += [np.array([y, x]) for x in patterns]
+        points += [np.array([y, x, 0]) for x in patterns]
     # check columns
     for x in range(binaryImage.shape[1]):
         patterns = _findPDP(binaryImage[:, x], strict)
-        points += [np.array([y, x]) for y in patterns]
+        points += [np.array([y, x, 1]) for y in patterns]
 
     # split into clusters
     clusters = []
     while len(points) > 0:
         cluster = [points.pop()]
         while True:
-            neighbors = [p for p in points
-                         if min(np.linalg.norm(p - p2) for p2 in cluster) <
-                         1.5]
+            neighbors = [
+                p for p in points
+                if min(np.linalg.norm((p - p2)[:2])
+                       for p2 in cluster) < 1.5
+            ]
             if len(neighbors) == 0:
                 break
             else:
@@ -325,27 +326,25 @@ def _readBinaryQRImage(binaryImage, strict):
                     removeArray(points, neighbor)
                 cluster += neighbors
         clusters.append(cluster)
-    # for cluster in clusters:
-    #   print("cluster: ", cluster)
+
+    # only accept clusters that have points from both RLE direction
+    validClusters = []
+    for cluster in clusters:
+        k = sum(p[2] for p in cluster)
+        if k > 0 and k < len(cluster):
+            validClusters.append(cluster)
 
     # not enough detected patterns
-    if len(clusters) < 3:
+    if len(validClusters) < 3:
         raise ValueError("QR error: failed to read QR image")
 
-    # TODO: only accept clusters that have points from both RLE direction
-
     # select top 3 biggest clusters
-    clusters.sort(key=len)
-    clusters = clusters[-3:]
-
-    # if one of the clusters have size of < 2, raise error
-    for cluster in clusters:
-        if len(cluster) < 2:
-            raise ValueError("QR error: failed to read QR image")
+    validClusters.sort(key=len)
+    validClusters = validClusters[-3:]
 
     # get average point of each cluster
     pdps = []
-    for cluster in clusters:
+    for cluster in validClusters:
         avg = sum(cluster) / len(cluster)
         pdps.append(avg)
 
@@ -373,9 +372,9 @@ def _readBinaryQRImage(binaryImage, strict):
         pdp_bl = pdps[i2]
         pdp_tr = pdps[i1]
 
-    print("topleft pdp:", pdp_tl)
-    print("bottomleft pdp:", pdp_bl)
-    print("topright pdp", pdp_tr)
+    # print("topleft pdp:", pdp_tl)
+    # print("bottomleft pdp:", pdp_bl)
+    # print("topright pdp", pdp_tr)
 
     # get the origin coordinates of QR pattern (excluding quiet zone)
     d = _qr_inner_width - 3 * 2 - 1
@@ -383,7 +382,7 @@ def _readBinaryQRImage(binaryImage, strict):
     dx = (pdp_tr - pdp_tl) / d
     conv = np.array([dy, dx]).T
     v0 = pdp_tl + conv @ np.array([-3, -3])
-    print('v0:', v0)
+    # print('v0:', v0)
 
     # check if the bottom right corner is in image
     bottomright = v0 + (dx + dy) * _qr_inner_width

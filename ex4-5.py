@@ -1,7 +1,7 @@
 from QR import loadPPMImage, readQRImage, stringToQRImage, saveImage, _stringToBits, _binarizeImage
 import ImageLoader
 
-filename = 'qr5.ppm'
+filename = 'qr10.ppm'
 image = loadPPMImage(filename)
 decoded = readQRImage(image)
 print(decoded.encode('utf-8'))
