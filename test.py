@@ -1,38 +1,36 @@
 import QR
 import numpy as np
 import time
+import threading
+import queue
 
-im = QR.loadPPMImage('qr8.ppm')
-print(im)
 
-# # np.set_printoptions(threshold=np.nan)
-# print(QR._stringToBits('abc'))
-# # 1, 1, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1, 1]
-# im = QR.stringToQRImage('abc')
+def doSome(in_que, out_que):
+    while True:
+        x = in_que.get()
+        time.sleep(1)
+        result = x + 100
+        out_que.put(result)
 
-# before = time.time()
-# a = np.zeros([1000, 1000])
-# for i in range(1000):
-# 	for j in range(1000):
-# 		a[i, j] = i * 1.1 + j * 2.3
-# after = time.time()
-# print(after - before, a)
 
-# before = time.time()
-# a = np.array([[i * 1.1 + j * 2.3 for j in range(1000)] for i in range(1000)])
-# after = time.time()
-# print(after - before, a)
+image_que = queue.Queue(maxsize=1)
+result_que = queue.Queue()
 
-# before = time.time()
-# a = np.empty((1000, 1000))
-# for (i, j), x in np.ndenumerate(a):
-#     x = i * 1.1 + j * 2.3
-# after = time.time()
-# print(after - before, a)
 
-# before = time.time()
-# a = (np.arange(1000) * 1.1)
-# b = np.tile(np.arange(1000) * 2.3, (1000, 1))
-# a = a[:, np.newaxis] + b
-# after = time.time()
-# print(after - before, a)
+t = threading.Thread(target=doSome, args=(image_que, result_que))
+t.start()
+
+i = 0
+while True:
+    try:
+        image_que.put(i, block=False)
+    except queue.Full as e:
+        pass
+    try:
+        re = result_que.get(block=False)
+        print(re)
+    except queue.Empty as e:
+        pass
+    time.sleep(0.5)
+    i += 1
+

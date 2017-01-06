@@ -253,6 +253,8 @@ def _findPDP(array, strict):
     for i in range(2, len(rlelist) - 2):
         if rlelist[i][0] == 0 and rlelist[i][1] >= 3:
             mod_width = rlelist[i][1] / 3
+            if mod_width < 5:
+                continue
             # allowable error [pixel]
             tolerance = 4 / 3 if strict else mod_width / 8
             if (near(rlelist[i - 1][1], mod_width, tolerance) and
@@ -341,11 +343,12 @@ def _readBinaryQRImage(binaryImage, strict):
     # select top 3 biggest clusters
     validClusters.sort(key=len)
     validClusters = validClusters[-3:]
-
+    # print([len(cl) for cl in validClusters])
     # get average point of each cluster
     pdps = []
     for cluster in validClusters:
         avg = sum(cluster) / len(cluster)
+        avg = avg[:2]       # remove the third field
         pdps.append(avg)
 
     # get which angle is the nearest to 90 degree
@@ -384,11 +387,14 @@ def _readBinaryQRImage(binaryImage, strict):
     v0 = pdp_tl + conv @ np.array([-3, -3])
     # print('v0:', v0)
 
-    # check if the bottom right corner is in image
-    bottomright = v0 + (dx + dy) * _qr_inner_width
-    if not (bottomright[0] > 0 and bottomright[0] < binaryImage.shape[0] and
-            bottomright[1] > 0 and bottomright[1] < binaryImage.shape[1]):
-        raise ValueError("QR error: failed to read QR image")
+    # check if the four corners are all in the image
+    for j in range(2):
+        for i in range(2):
+            corner = v0 + conv @ np.array(
+                [j * _qr_inner_width, i * _qr_inner_width])
+            if not (corner[0] > 0 and corner[0] < binaryImage.shape[0] and
+                    corner[1] > 0 and corner[1] < binaryImage.shape[1]):
+                raise ValueError("QR error: qr code is partly off the image")
 
     # get code from image
     code = []
@@ -424,7 +430,6 @@ def _readBinaryQRImage(binaryImage, strict):
         else:
             break
     decoded = _decode(code)
-    return decoded
 
 
 def readQRImage(image, strict=True):

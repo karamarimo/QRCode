@@ -1,3 +1,3 @@
 import QR
-image = QR.stringToQRImage('kubota ryou 1029266228')
-QR.saveImage(image, 'sample3.ppm')
+image = QR.stringToQRImage('An apple a day keeps the doctor away.')
+QR.saveImage(image, 'qr_untransformed(An apple).ppm')
