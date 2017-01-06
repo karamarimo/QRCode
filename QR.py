@@ -431,6 +431,9 @@ def _readBinaryQRImage(binaryImage, strict):
             break
     decoded = _decode(code)
 
+    info = {'pdps': pdps}
+    return (decoded, info)
+
 
 def readQRImage(image, strict=True):
     return _readBinaryQRImage(_binarizeImage(image), strict)
