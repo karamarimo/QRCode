@@ -1,3 +1,9 @@
 import QR
-image = QR.stringToQRImage('An apple a day keeps the doctor away.')
-QR.saveImage(image, 'qr_untransformed(An apple).ppm')
+import string
+import random
+
+# random string
+s = "".join([random.choice(string.hexdigits) for i in range(53)])
+image = QR.stringToQRImage(s, masked=True)
+print(s)
+QR.saveImage(image, 'random_string.ppm')

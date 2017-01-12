@@ -1,10 +1,32 @@
 import math
 import numpy as np
+from itertools import chain
 
-_qr_width = 33
-_quietWidth = 4
-_qr_inner_width = _qr_width - _quietWidth * 2
-_maxStrLen = _qr_inner_width ** 2 - 9 * 9 * 3
+qr_width = 33
+quietWidth = 4
+qr_inner_width = qr_width - quietWidth * 2
+maxBitLen = qr_inner_width ** 2 - 8 * 8 * 3
+
+
+# take a ndarray and encode it into a list using run-length encoding
+# ex. array([0,0,1,1,1,0]) => [(0,2),(1,3),(0,1)]
+def _runLengthEncode(array):
+    if array.size == 0:
+        return []
+
+    out = []
+    last = array[0]
+    runLength = 0
+
+    for b in array:
+        if b == last:
+            runLength += 1
+        else:
+            out.append((last, runLength))
+            last = b
+            runLength = 1
+    out.append((last, runLength))
+    return out
 
 
 def _stringToBits(s):
@@ -14,66 +36,169 @@ def _stringToBits(s):
     return bits
 
 
-def _bitsToQR(bits):
+def _getMaskFun(id):
+    if id == 0:
+        return lambda y, x: (y + x) % 2 == 0
+    elif id == 1:
+        return lambda y, x: y % 2 == 0
+    elif id == 2:
+        return lambda y, x: x % 3 == 0
+    elif id == 3:
+        return lambda y, x: (y + x) % 3 == 0
+    elif id == 4:
+        return lambda y, x: (y // 2 + x // 3) % 2 == 0
+    elif id == 5:
+        return lambda y, x: (y * x) % 2 + (y * x) % 3 == 0
+    elif id == 6:
+        return lambda y, x: ((y * x) % 2 + (y * x) % 3) % 2 == 0
+    elif id == 7:
+        return lambda y, x: ((y + x) % 2 + (y * x) % 3) % 2 == 0
+    else:
+        ValueError("invalid mask id")
+
+
+def _getMask(id):
+    mf = _getMaskFun(id)
+    m = np.zeros((qr_inner_width, qr_inner_width), np.bool)
+    for y in range(qr_inner_width):
+        for x in range(qr_inner_width):
+            m[y, x] = mf(y, x)
+
+    # clear the parts for function patterns
+    m[:8, :8] = False
+    m[-8:, :8] = False
+    m[:8, -8:] = False
+
+    return m
+
+
+def _evaluateMaskedQR(qrimage):
+    lines = chain((row for row in qrimage), (col for col in qrimage.T))
+
+    score1 = 0
+    score2 = 0
+    score3 = 0
+    score4 = 0
+    for line in lines:
+        rle = _runLengthEncode(line)
+
+        # find consective modules of length more than 5
+        # (length - 2) points per each
+        for run in rle:
+            if run[1] >= 5:
+                score1 += run[1] - 2
+
+        # find patterns of 0100010 next to 1111
+        # 40 points per each
+        # TODO: search not based on 1111 but on 000
+        length = len(rle)
+        if length >= 6:
+            for i in range(2, length - 2):
+                if (rle[i] == (False, 3)):
+                    if ((i + 3 < length and
+                         rle[i - 1][1] == 1 and
+                         rle[i + 1][1] == 1 and
+                         rle[i + 2][1] == 1 and
+                         rle[i + 3][1] >= 4) or
+                        (i - 3 >= 0 and
+                         rle[i + 1][1] == 1 and
+                         rle[i - 1][1] == 1 and
+                         rle[i - 2][1] == 1 and
+                         rle[i - 3][1] >= 4)):
+                        score2 += 40
+
+    # find 2*2 squares of the same modules
+    # 3 points per each
+    h = qrimage.shape[0]
+    w = qrimage.shape[1]
+
+    for y in range(h - 1):
+        for x in range(w - 1):
+            m = qrimage[y, x]
+            if (m == qrimage[y + 1, x] and
+                    m == qrimage[y, x + 1] and
+                    m == qrimage[y + 1, x + 1]):
+                score3 += 3
+
+    # when light modules' percentage is p and
+    # 5k <= |50 - p| < 5(k + 1),
+    # 10 points per k
+    p = np.count_nonzero(qrimage) / qrimage.size * 100
+    k = int(math.floor(abs(p - 50) / 5))
+    score4 += k * 10
+
+    print(score1, score2, score3, score4)
+    return score1 + score2 + score3 + score4
+
+
+def _bitsToQRImage(bits, masked):
     black = np.array([0, 0, 0])
     white = np.array([255, 255, 255])
 
+    _bits = ([0, 0, 0] + bits) if masked else bits
+
     # get color in Position Detection Pattern including margin (9*9)
     # origin is at the center
-    def PDPColorAt(x, y):
+    def PDPModuleAt(x, y):
         d = max(abs(x), abs(y))
         if d <= 1:
-            return black
+            return False
         elif d <= 2:
-            return white
+            return True
         elif d <= 3:
-            return black
+            return False
         else:
-            return white
+            return True
 
-    if len(bits) > _maxStrLen:
+    if len(_bits) > maxBitLen:
         raise ValueError("QR error: argument bitarray is too long")
 
-    image = np.zeros((_qr_width, _qr_width, 3), np.uint8)
+    # create qr code without quiet zone
+    image = np.zeros((qr_inner_width, qr_inner_width), dtype=np.bool)
     idx = 0     # index of next character of s to encode
-    maxIdx = len(bits) - 1
-    for i in range(_qr_width):
-        for j in range(_qr_width):
-            color = None
-            if (i not in range(_quietWidth, _qr_width - _quietWidth)) or \
-               (j not in range(_quietWidth, _qr_width - _quietWidth)):
-                # quiet zone
-                color = white
-            elif (i in range(_quietWidth, _quietWidth + 8) and
-                    j in range(_quietWidth, _quietWidth + 8)):
+    maxIdx = len(_bits) - 1
+    crange = range(qr_inner_width)
+    for i in crange:
+        for j in crange:
+            if (i in crange[:8] and j in crange[:8]):
                 # top left PDP
-                color = PDPColorAt(i - (_quietWidth + 3),
-                                   j - (_quietWidth + 3))
-            elif (i in range(_qr_width - _quietWidth - 8,
-                             _qr_width - _quietWidth) and
-                    j in range(_quietWidth, _quietWidth + 8)):
-                # top right PDP
-                color = PDPColorAt(i - (_qr_width - _quietWidth - 4),
-                                   j - (_quietWidth + 3))
-            elif (i in range(_quietWidth, _quietWidth + 8) and
-                    j in range(_qr_width - _quietWidth - 8,
-                               _qr_width - _quietWidth)):
+                module = PDPModuleAt(i - 3, j - 3)
+            elif (i in crange[-8:] and j in crange[:8]):
                 # bottom left PDP
-                color = PDPColorAt(i - (_quietWidth + 3),
-                                   j - (_qr_width - _quietWidth - 4))
+                module = PDPModuleAt(i - (qr_inner_width - 1 - 3), j - 3)
+            elif (i in crange[:8] and j in crange[-8:]):
+                # top right PDP
+                module = PDPModuleAt(i - 3, j - (qr_inner_width - 1 - 3))
             else:
                 # data
                 if idx <= maxIdx:
-                    color = white if bits[idx] == 1 else black
+                    module = True if _bits[idx] == 1 else False
                     idx += 1
                 else:
-                    color = black
-            image[i, j] = color
+                    module = False
+            image[i, j] = module
+
+    if masked:
+        maskedCodes = [np.logical_xor(_getMask(i), image) for i in range(8)]
+        scores = [_evaluateMaskedQR(code) for code in maskedCodes]
+        best = scores.index(min(scores))
+        maskbits = [int(x) for x in "{:03b}".format(best)]
+        image = maskedCodes[best]
+        print('selected mask pattern:', maskbits)
+        # put mask pattern bits to the first 3 data modules
+        image[0, 8:11] = maskbits
+
+    # add quiet zone
+    image = np.pad(image, pad_width=quietWidth,
+                   mode='constant', constant_values=True)
+
+    # convert each module into a color(black/white)
+    image = np.where(image[:, :, np.newaxis], white, black)
     return image
 
 
-def stringToQRImage(s):
-    return _bitsToQR(_stringToBits(s))
+def stringToQRImage(s, masked=False):
+    return _bitsToQRImage(_stringToBits(s), masked)
 
 
 def saveImage(image, filename):
@@ -219,27 +344,6 @@ def _binarizeImage(image):
     return _image
 
 
-# take a ndarray of 0,1 and encode it into a list using run-length encoding
-# ex. array([0,0,1,1,1,0]) => [(0,2),(1,3),(0,1)]
-def _runLengthEncode(list):
-    if list.size == 0:
-        return []
-
-    out = []
-    last = list[0]
-    runLength = 0
-
-    for b in list:
-        if b == last:
-            runLength += 1
-        else:
-            out.append((last, runLength))
-            last = b
-            runLength = 1
-    out.append((last, runLength))
-    return out
-
-
 # take a ndarrayof 0,1 and
 # return the center of potential position detection patterns
 def _findPDP(array, strict):
@@ -293,7 +397,7 @@ def _decode(code):
     return out
 
 
-def _readBinaryQRImage(binaryImage, strict):
+def _readBinaryQRImage(binaryImage, masked, strict):
     def removeArray(lis, item):
         for i, ele in enumerate(lis):
             if np.array_equal(item, ele):
@@ -380,7 +484,7 @@ def _readBinaryQRImage(binaryImage, strict):
     # print("topright pdp", pdp_tr)
 
     # get the origin coordinates of QR pattern (excluding quiet zone)
-    d = _qr_inner_width - 3 * 2 - 1
+    d = qr_inner_width - 3 * 2 - 1
     dy = (pdp_bl - pdp_tl) / d
     dx = (pdp_tr - pdp_tl) / d
     conv = np.array([dy, dx]).T
@@ -391,21 +495,21 @@ def _readBinaryQRImage(binaryImage, strict):
     for j in range(2):
         for i in range(2):
             corner = v0 + conv @ np.array(
-                [j * _qr_inner_width, i * _qr_inner_width])
+                [j * qr_inner_width, i * qr_inner_width])
             if not (corner[0] > 0 and corner[0] < binaryImage.shape[0] and
                     corner[1] > 0 and corner[1] < binaryImage.shape[1]):
                 raise ValueError("QR error: qr code is partly off the image")
 
     # get code from image
     code = []
-    for j in range(_qr_inner_width):
-        for i in range(_qr_inner_width):
+    for j in range(qr_inner_width):
+        for i in range(qr_inner_width):
             # ignore position detection patterns
             if ((i in range(8) and j in range(8)) or
-                (i in range(_qr_inner_width - 8, _qr_inner_width) and
+                (i in range(qr_inner_width - 8, qr_inner_width) and
                     j in range(8)) or
                 (i in range(8) and
-                    j in range(_qr_inner_width - 8, _qr_inner_width))):
+                    j in range(qr_inner_width - 8, qr_inner_width))):
                 continue
             v = v0 + conv @ np.array([j, i])
             # get module at (x,y) using bilinear interpolation
@@ -435,5 +539,5 @@ def _readBinaryQRImage(binaryImage, strict):
     return (decoded, info)
 
 
-def readQRImage(image, strict=True):
-    return _readBinaryQRImage(_binarizeImage(image), strict)
+def readQRImage(image, masked=False, strict=True):
+    return _readBinaryQRImage(_binarizeImage(image), masked, strict)
