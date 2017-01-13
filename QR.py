@@ -90,7 +90,6 @@ def _evaluateMaskedQR(qrimage):
 
         # find patterns of 0100010 next to 1111
         # 40 points per each
-        # TODO: search not based on 1111 but on 000
         length = len(rle)
         if length >= 6:
             for i in range(2, length - 2):
@@ -357,10 +356,10 @@ def _findPDP(array, strict):
     for i in range(2, len(rlelist) - 2):
         if rlelist[i][0] == 0 and rlelist[i][1] >= 3:
             mod_width = rlelist[i][1] / 3
-            if mod_width < 5:
-                continue
+            # if mod_width < 5:
+            #     continue
             # allowable error [pixel]
-            tolerance = 4 / 3 if strict else mod_width / 8
+            tolerance = 6 / 3 if strict else mod_width / 8
             if (near(rlelist[i - 1][1], mod_width, tolerance) and
                     near(rlelist[i - 2][1], mod_width, tolerance) and
                     near(rlelist[i + 1][1], mod_width, tolerance) and
@@ -440,9 +439,9 @@ def _readBinaryQRImage(binaryImage, masked, strict):
         if k > 0 and k < len(cluster):
             validClusters.append(cluster)
 
-    # not enough detected patterns
+    # error if not enough pdps detected
     if len(validClusters) < 3:
-        raise ValueError("QR error: failed to read QR image")
+        raise ValueError("QR error: cannot detect position detection patterns")
 
     # select top 3 biggest clusters
     validClusters.sort(key=len)
@@ -502,6 +501,8 @@ def _readBinaryQRImage(binaryImage, masked, strict):
 
     # get code from image
     code = []
+    maskFun = None
+    codeCount = 0
     for j in range(qr_inner_width):
         for i in range(qr_inner_width):
             # ignore position detection patterns
@@ -511,6 +512,8 @@ def _readBinaryQRImage(binaryImage, masked, strict):
                 (i in range(8) and
                     j in range(qr_inner_width - 8, qr_inner_width))):
                 continue
+
+            codeCount += 1
             v = v0 + conv @ np.array([j, i])
             # get module at (x,y) using bilinear interpolation
             x_f = math.floor(v[1])
@@ -523,7 +526,23 @@ def _readBinaryQRImage(binaryImage, masked, strict):
                 (v[1] - x_f) * binaryImage[y_c, x_c]
             m = (y_c - v[0]) * m1 + (v[0] - y_f) * m2
             m = round(m).astype(int)
-            code.append(m)
+
+            if masked:
+                if codeCount > 3:
+                    # unmask
+                    mask = maskFun(j, i)
+                    m = 1 - m if mask == 1 else m
+                    code.append(m)
+                else:
+                    code.append(m)
+                    # get mask function with the first 3 bit code
+                    if codeCount == 3:
+                        maskId = code[0] * 4 + code[1] * 2 + code[2]
+                        print(maskId)
+                        maskFun = _getMaskFun(maskId)
+                        code.clear()
+            else:
+                code.append(m)
     # print(code)
 
     # trim trailing 00..0 off the code into a length of a multple of 8

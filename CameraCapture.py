@@ -13,7 +13,7 @@ def image_worker(in_que, out_que):
             break
 
         try:
-            result = QR.readQRImage(frame)
+            result = QR.readQRImage(frame, masked=True)
             out_que.put(result)
         except ValueError:
             pass
