@@ -345,9 +345,12 @@ def _binarizeImage(image):
 
 # take a ndarrayof 0,1 and
 # return the center of potential position detection patterns
-def _findPDP(array, strict):
+def _findPDP(array, minModuleWidth=1):
     def near(value, origin, error):
         return abs(value - origin) < error
+
+    # allowable error [pixel]
+    tolerance = 4 / 3
 
     rlelist = _runLengthEncode(array)
     out = []
@@ -356,10 +359,8 @@ def _findPDP(array, strict):
     for i in range(2, len(rlelist) - 2):
         if rlelist[i][0] == 0 and rlelist[i][1] >= 3:
             mod_width = rlelist[i][1] / 3
-            # if mod_width < 5:
-            #     continue
-            # allowable error [pixel]
-            tolerance = 6 / 3 if strict else mod_width / 8
+            if mod_width < minModuleWidth:
+                continue
             if (near(rlelist[i - 1][1], mod_width, tolerance) and
                     near(rlelist[i - 2][1], mod_width, tolerance) and
                     near(rlelist[i + 1][1], mod_width, tolerance) and
@@ -396,7 +397,7 @@ def _decode(code):
     return out
 
 
-def _readBinaryQRImage(binaryImage, masked, strict):
+def _readBinaryQRImage(binaryImage, masked):
     def removeArray(lis, item):
         for i, ele in enumerate(lis):
             if np.array_equal(item, ele):
@@ -405,13 +406,16 @@ def _readBinaryQRImage(binaryImage, masked, strict):
 
     # center points of potential position detection patterns
     points = []
+
+    minModuleWidth = np.min(binaryImage.shape) / 100
+
     # check rows
     for y in range(binaryImage.shape[0]):
-        patterns = _findPDP(binaryImage[y], strict)
+        patterns = _findPDP(binaryImage[y], minModuleWidth=minModuleWidth)
         points += [np.array([y, x, 0]) for x in patterns]
     # check columns
     for x in range(binaryImage.shape[1]):
-        patterns = _findPDP(binaryImage[:, x], strict)
+        patterns = _findPDP(binaryImage[:, x], minModuleWidth=minModuleWidth)
         points += [np.array([y, x, 1]) for y in patterns]
 
     # split into clusters
@@ -538,7 +542,7 @@ def _readBinaryQRImage(binaryImage, masked, strict):
                     # get mask function with the first 3 bit code
                     if codeCount == 3:
                         maskId = code[0] * 4 + code[1] * 2 + code[2]
-                        print(maskId)
+                        # print(maskId)
                         maskFun = _getMaskFun(maskId)
                         code.clear()
             else:
@@ -558,5 +562,5 @@ def _readBinaryQRImage(binaryImage, masked, strict):
     return (decoded, info)
 
 
-def readQRImage(image, masked=False, strict=True):
-    return _readBinaryQRImage(_binarizeImage(image), masked, strict)
+def readQRImage(image, masked=False):
+    return _readBinaryQRImage(_binarizeImage(image), masked)
